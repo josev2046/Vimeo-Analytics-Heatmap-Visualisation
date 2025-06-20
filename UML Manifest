@@ -1,0 +1,38 @@
+@startuml
+
+participant VimeoHeatmapApp as App
+participant ChartRenderer as Chart
+database VimeoAPI as Vimeo
+
+App -> App: Initiates heatmap generation
+activate App
+
+App -> App: Prepare UI (loading state, clear previous chart)
+note right of App: Sets button to 'Loading...', displays status message, clears existing chart.
+
+App -> Vimeo: Request raw analytics data for last 5 weeks
+activate Vimeo
+note left of Vimeo: This involves authenticated API calls to Vimeo, potentially fetching multiple pages of data.
+Vimeo --> App: Raw analytics data (potentially paginated)
+deactivate Vimeo
+
+App -> App: Process rawData (find top 10 videos, format for heatmap)
+note right of App: Filters, aggregates, and transforms raw API data into a structure suitable for ECharts (e.g., [x, y, value] arrays). Identifies top 10 videos by total views.
+
+alt Data successfully retrieved and processed
+    App -> Chart: Render heatmap (with processedData)
+    activate Chart
+    note right of Chart: ECharts takes the processed data and configuration to draw the interactive heatmap visualization.
+    Chart --> App: Heatmap displayed
+    deactivate Chart
+
+    App -> App: Update UI (hide status, enable button)
+    note right of App: Clears loading status message and restores the 'Generate Heatmap' button.
+else Error occurred
+    App -> App: Display error message
+    note right of App: Shows a user-friendly error message on the UI if any step fails (e.g., API error, no data).
+end
+
+deactivate App
+
+@enduml
