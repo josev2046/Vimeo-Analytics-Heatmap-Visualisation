@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vimeo Views Heatmap (ECharts)</title>
+    <!-- ECharts Library -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        /* Basic styles needed for ECharts container, without aesthetic CSS */
+        #heatmap-container {
+            width: 100%;
+            height: 600px; /* ECharts needs a defined height */
+            min-height: 400px;
+            border: 1px solid #ccc; /* Add a simple border for visibility */
+        }
+        body {
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 20px;
+            border: 1px solid #eee;
+            background-color: #f9f9f9;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        p {
+            font-size: 1em;
+            margin-top: 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="password"] {
+            width: calc(100% - 10px);
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status-message {
+            margin-top: 15px;
+            text-align: center;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>Vimeo Views Heatmap (ECharts)</h1>
+            <p id="subtitle">
+                Top 10 Video Views Over the Last 5 Weeks
+            </p>
+        </header>
+
+        <div>
+            <div>
+                <label for="apiTokenInput">Vimeo API Token</label>
+                <input type="password" id="apiTokenInput" placeholder="Enter your Vimeo API Token here">
+            </div>
+
+            <div>
+                <p>
+                    Click the button to fetch analytics and generate the heatmap.
+                </p>
+                <button id="runBtn">
+                    Generate Heatmap
+                </button>
+            </div>
+            
+            <div>
+                <!-- ECharts will be rendered here -->
+                <div id="heatmap-container"></div>
+                <div id="status-message">Enter your API token and click the button to start.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const BASE_URL = "https://api.vimeo.com";
+
+        // --- DOM Elements ---
+        const runBtn = document.getElementById('runBtn');
+        const apiTokenInput = document.getElementById('apiTokenInput');
+        const heatmapContainer = document.getElementById('heatmap-container');
+        const statusMessage = document.getElementById('status-message');
+        let myEChart; // To hold the ECharts instance
+
+        /**
+         * Fetches and processes analytics data to generate a heatmap.
+         */
+        async function generateHeatmap() {
+            const apiToken = apiTokenInput.value.trim();
+            if (!apiToken) {
+                statusMessage.textContent = '❌ Please enter your Vimeo API Token.';
+                statusMessage.style.display = 'block';
+                return;
+            }
+
+            const HEADERS = {
+                'Authorization': `Bearer ${apiToken}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/vnd.vimeo.*+json;version=3.4',
+            };
+
+            runBtn.disabled = true;
+            runBtn.textContent = 'Loading...';
+            
+            // Clear previous chart if it exists
+            if (myEChart) {
+                myEChart.dispose(); // Dispose previous ECharts instance
+                myEChart = null;
+            }
+            heatmapContainer.innerHTML = ''; // Clear container content
+
+            statusMessage.textContent = 'Fetching analytics data...';
+            statusMessage.style.display = 'block';
+
+            try {
+                // 1. Fetch data for the last 5 weeks
+                const toDate = new Date();
+                const fromDate = new Date();
+                fromDate.setDate(toDate.getDate() - (7 * 5)); // 5 weeks
+                const toDateString = toDate.toISOString().split('T')[0];
+                const fromDateString = fromDate.toISOString().split('T')[0];
+                
+                let reportUrl = `${BASE_URL}/me/analytics?dimension=video&time_interval=week&from=${fromDateString}&to=${toDateString}&page_size=100`;
+                let rawData = [];
+                let pageNum = 1;
+
+                while (reportUrl) {
+                    statusMessage.textContent = `Fetching analytics data (Page ${pageNum})...`;
+                    const response = await fetch(reportUrl, { headers: HEADERS });
+                    if (!response.ok) throw new Error(`API Error ${response.status}: ${await response.text()}`);
+                    
+                    const result = await response.json();
+                    if (result.data) rawData.push(...result.data);
+                    
+                    reportUrl = result.paging?.next ? `${BASE_URL}${result.paging.next}` : null;
+                    pageNum++;
+                }
+
+                if (rawData.length === 0) throw new Error("No analytics data returned for this period.");
+
+                // 2. Process the data
+                statusMessage.textContent = 'Processing data...';
+                const processedData = processVimeoData(rawData);
+
+                if (processedData.heatmapData.length === 0) throw new Error("No videos with view data were found.");
+
+                // 3. Render the heatmap
+                statusMessage.textContent = 'Rendering heatmap...';
+                renderHeatmapECharts(processedData.heatmapData, processedData.dates, processedData.videoTitles, processedData.maxViews);
+                statusMessage.style.display = 'none';
+
+            } catch (err) {
+                console.error(err);
+                statusMessage.textContent = `❌ Error: ${err.message}`;
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = 'Generate Heatmap';
+            }
+        }
+
+        /**
+         * Processes raw API data to find the top 10 videos and structure data for ECharts heatmap.
+         */
+        function processVimeoData(data) {
+            const videoTotals = new Map();
+            const videoDataByDate = new Map();
+            const uniqueDates = new Set();
+
+            // Aggregate total views per video and store weekly data
+            data.forEach(item => {
+                // Ensure the data has the expected structure
+                if (!item.metadata?.connections?.video || item.views === undefined) return;
+
+                const videoId = item.metadata.connections.video.uri;
+                const videoTitle = item.metadata.connections.video.title;
+                const date = item.start_date.split('T')[0]; // Get only the date part
+                const views = item.views;
+                uniqueDates.add(date);
+
+                // Sum total views for ranking
+                videoTotals.set(videoId, {
+                    title: videoTitle,
+                    totalViews: (videoTotals.get(videoId)?.totalViews || 0) + views
+                });
+                
+                // Store views by date for the heatmap
+                if (!videoDataByDate.has(videoId)) videoDataByDate.set(videoId, new Map());
+                videoDataByDate.get(videoId).set(date, views);
+            });
+            
+            // Get top 10 videos by total views
+            const top10Videos = Array.from(videoTotals.entries())
+                .sort((a, b) => b[1].totalViews - a[1].totalViews)
+                .slice(0, 10);
+            
+            // Create a list of titles with ranks prepended
+            const rankedVideoTitles = top10Videos.map((v, i) => `${i + 1}. ${v[1].title}`);
+            const videoIdToRankedTitle = new Map(top10Videos.map((v, i) => [v[0], rankedVideoTitles[i]]));
+
+            const top10VideoIds = top10Videos.map(v => v[0]);
+            const dates = Array.from(uniqueDates).sort(); // Sorted dates for X-axis labels
+
+            // Prepare data for ECharts heatmap: [xIndex, yIndex, value]
+            const heatmapData = [];
+            let maxViews = 0;
+
+            top10VideoIds.forEach((videoId, videoIndex) => {
+                const rankedTitle = videoIdToRankedTitle.get(videoId);
+                dates.forEach((date, dateIndex) => {
+                    const views = videoDataByDate.get(videoId)?.get(date) || 0;
+                    heatmapData.push([dateIndex, videoIndex, views]);
+                    if (views > maxViews) {
+                        maxViews = views;
+                    }
+                });
+            });
+            
+            return {
+                heatmapData: heatmapData,
+                dates: dates.map(d => `Wk of ${d.substring(5)}`), // Formatted dates for X-axis labels
+                videoTitles: rankedVideoTitles, // Formatted video titles for Y-axis labels
+                maxViews: maxViews
+            };
+        }
+
+        /**
+         * Renders the heatmap using ECharts.
+         */
+        function renderHeatmapECharts(data, xLabels, yLabels, maxViews) {
+            // Initialize the ECharts instance
+            myEChart = echarts.init(heatmapContainer);
+
+            const option = {
+                title: {
+                    text: 'Vimeo Video Views by Week',
+                    left: 'center',
+                    top: 'top',
+                    textStyle: {
+                        // Removed custom font and color
+                        // color: '#1d4ed8',
+                        // fontFamily: 'Inter, sans-serif',
+                        // fontWeight: 'bold',
+                        fontSize: 24
+                    }
+                },
+                tooltip: {
+                    position: 'top',
+                    formatter: function (params) {
+                        // params.data is [xIndex, yIndex, value]
+                        const dateLabel = xLabels[params.data[0]];
+                        const videoTitle = yLabels[params.data[1]];
+                        const views = params.data[2];
+                        return `Views: ${views.toLocaleString()}<br>Video: ${videoTitle}<br>Week: ${dateLabel}`;
+                    }
+                },
+                grid: {
+                    left: '200', // Adjust left margin for long video titles
+                    right: '10%',
+                    top: '80',
+                    bottom: '80',
+                    containLabel: false // Set to false so padding applies as expected
+                },
+                xAxis: {
+                    type: 'category',
+                    data: xLabels,
+                    splitArea: {
+                        show: true
+                    },
+                    axisLabel: {
+                        rotate: -45, // Rotate labels for better readability
+                        align: 'right',
+                        // Removed custom font and color
+                        // fontFamily: 'Inter, sans-serif',
+                        fontSize: 10
+                        // color: '#6b7280'
+                    },
+                    name: 'Week',
+                    nameLocation: 'middle',
+                    nameGap: 60, // Adjust gap for x-axis title
+                    nameTextStyle: {
+                        // Removed custom font and color
+                        // fontFamily: 'Inter, sans-serif',
+                        // fontWeight: 'bold',
+                        fontSize: 14
+                        // color: '#1f2937'
+                    }
+                },
+                yAxis: {
+                    type: 'category',
+                    data: yLabels,
+                    splitArea: {
+                        show: true
+                    },
+                    axisLabel: {
+                        // Removed custom font and color
+                        // fontFamily: 'Inter, sans-serif',
+                        fontSize: 10
+                        // color: '#6b7280'
+                    },
+                    name: 'Video Title',
+                    nameLocation: 'middle',
+                    nameGap: 180, // Adjust gap for y-axis title
+                    nameTextStyle: {
+                        // Removed custom font and color
+                        // fontFamily: 'Inter, sans-serif',
+                        // fontWeight: 'bold',
+                        fontSize: 14
+                        // color: '#1f2937'
+                    }
+                },
+                visualMap: {
+                    min: 0,
+                    max: maxViews === 0 ? 1 : maxViews, // Avoid max being 0
+                    calculable: true,
+                    orient: 'horizontal',
+                    left: 'center',
+                    bottom: '10',
+                    inRange: {
+                        color: ['#E0F2F7', '#BBDEFB', '#90CAF9', '#64B5F6', '#42A5F5', '#2196F3', '#1976D2', '#1565C0', '#0D47A1'] // Blues palette
+                    },
+                    textStyle: {
+                        // Removed custom font and color
+                        // color: '#6b7280'
+                    }
+                },
+                series: [{
+                    name: 'Vimeo Views',
+                    type: 'heatmap',
+                    data: data,
+                    label: {
+                        show: false // Set to true if you want to show view count on cells
+                    },
+                    emphasis: {
+                        itemStyle: {
+                            shadowBlur: 10,
+                            shadowColor: 'rgba(0, 0, 0, 0.5)'
+                        }
+                    }
+                }]
+            };
+
+            myEChart.setOption(option);
+
+            // Make the chart responsive on window resize
+            window.addEventListener('resize', function () {
+                myEChart.resize();
+            });
+        }
+        
+        runBtn.addEventListener('click', generateHeatmap);
+    </script>
+</body>
+</html>
