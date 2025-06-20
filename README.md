@@ -1,2 +1,1 @@
-# Vimeo-Analytics-Heatmap-Visualisation
-A web-based application for visualising Vimeo video view analytics as an interactive heatmap, demonstrating data retrieval, processing, and chart rendering.
+![image](https://github.com/user-attachments/assets/c52bba57-6235-4499-9237-fe82f41b6997)
