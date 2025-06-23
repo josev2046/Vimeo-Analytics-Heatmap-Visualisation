@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15719223.svg)](https://doi.org/10.5281/zenodo.15719223)
+
 The primary function of this application is to furnish a visual representation of Vimeo video view analytics over the last five weeks. It is designed to retrieve historical view data, identify the top ten performing videos by their aggregate view count, and subsequently render this information as an interactive heatmap. This visualisation facilitates a straightforward and immediate assessment of video performance trends and popular content across specified weekly intervals.
 
 To run it, you must use a valid Vimeo API token with the requisite permissions to access their account's analytics. Activation of the "Generate Heatmap" button will initiate the data retrieval and processing sequence and the display of the heatmap.
